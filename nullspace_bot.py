@@ -6,6 +6,8 @@ import logging
 import colorlog
 import tempfile
 import sys
+import asyncio
+import time
 from PIL import Image, ImageSequence
 from telegram import Update, ReplyKeyboardMarkup, constants, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, CallbackQueryHandler, filters
@@ -75,7 +77,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     keyboard = [
         ['🔒 Зашифровать', '🔓 Расшифровать'],
-        ['📸 Зашифровать img (GIF/PNG)', '🔍 О боте']
+        ['📸 Зашифровать img (GIF/PNG)', '🔐 Цезарь'],
+        ['🔄 жмЫх', '🔍 О боте']
     ]
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
@@ -868,6 +871,67 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         )
         return
     
+    if text == '🔐 Цезарь':
+        if user_id not in USER_STATES:
+            USER_STATES[user_id] = {}
+        USER_STATES[user_id]['waiting_for_caesar_text'] = True
+        
+        await update.message.reply_text(
+            '🔐 <b>Шифр Цезаря</b>\n\n'
+            'Отправьте текст, который хотите зашифровать сдвигом Цезаря.\n'
+            'После этого вам будет предложено ввести значение сдвига.',
+            parse_mode='HTML'
+        )
+        return
+    
+    if user_id in USER_STATES and USER_STATES[user_id].get('waiting_for_caesar_text', False):
+        USER_STATES[user_id]['caesar_text'] = text
+        USER_STATES[user_id]['waiting_for_caesar_text'] = False
+        USER_STATES[user_id]['waiting_for_caesar_shift'] = True
+        
+        await update.message.reply_text(
+            '🔢 Теперь введите значение сдвига (целое число):\n\n'
+            'Примеры:\n'
+            '• 3 - классический сдвиг на 3 позиции вперёд\n'
+            '• -5 - сдвиг на 5 позиций назад\n'
+            '• 42 - сдвиг на 42 позиции\n\n'
+            '⚠️ Чтобы расшифровать сообщение, получатель должен знать это значение!'
+        )
+        return
+    
+    if user_id in USER_STATES and USER_STATES[user_id].get('waiting_for_caesar_shift', False):
+        try:
+            shift = int(text)
+            original_text = USER_STATES[user_id]['caesar_text']
+            
+            # Шифруем текст
+            encrypted_text = caesar_cipher(original_text, shift)
+            
+            # Отправляем зашифрованное сообщение
+            await update.message.reply_text(
+                f'🔐 <b>Зашифровано шифром Цезаря (сдвиг: {shift}):</b>\n\n'
+                f'{encrypted_text}\n\n'
+                f'⚠️ Для расшифровки сообщения получатель должен использовать сдвиг: <b>{-shift}</b>',
+                parse_mode='HTML'
+            )
+            
+            # Сбрасываем состояние
+            USER_STATES[user_id]['waiting_for_caesar_shift'] = False
+            del USER_STATES[user_id]['caesar_text']
+            
+            # Отправляем инструкцию по расшифровке
+            await update.message.reply_text(
+                '📋 <b>Как расшифровать:</b>\n\n'
+                '1. Получатель должен выбрать команду "🔐 Цезарь"\n'
+                '2. Вставить зашифрованный текст\n'
+                f'3. Ввести значение обратного сдвига: <b>{-shift}</b>\n',
+                parse_mode='HTML'
+            )
+            return
+        except ValueError:
+            await update.message.reply_text('❌ Ошибка! Введите целое число для сдвига.')
+            return
+    
     if text == '📸 Зашифровать img (GIF/PNG)':
 
         if user_id not in USER_STATES:
@@ -877,19 +941,38 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
         await update.message.reply_text('Отправьте фотографию или GIF, которые хотите зашифровать:')
         return
     
+    if text == '🔄 жмЫх':
+        if user_id not in USER_STATES:
+            USER_STATES[user_id] = {}
+        USER_STATES[user_id]['waiting_for_zhmyh_text'] = True
+        
+        await update.message.reply_text(
+            '🔄 <b>жмЫх анимация юникода</b>\n\n'
+            'Отправьте текст, который хотите анимировать.\n'
+            'Бот будет постепенно сдвигать каждый символ в таблице Unicode,\n'
+            'создавая эффект трансформации текста в режиме реального времени.\n'
+            'Анимация будет идти бесконечно, пока вы не нажмете кнопку "Отмена".',
+            parse_mode='HTML'
+        )
+        return
+    
     if text == '🔍 О боте':
         await update.message.reply_text(
             '🔐 <b>NullsPace Steganography Bot</b>\n\n'
             '🤫 Этот бот шифрует сообщения с помощью невидимых zero-width символов.\n'
             '🔍 Зашифрованное сообщение выглядит как обычный текст "пр".\n'
             '🖼️ Поддерживает шифрование изображений (до 150×150 пикселей в PNG)!\n'
-            '🎞️ Также шифрует GIF-анимации (50×50, 5 FPS)!\n\n'
+            '🎞️ Также шифрует GIF-анимации (50×50, 5 FPS)!\n'
+            '🔢 Поддерживает шифрование методом Цезаря со сдвигом.\n'
+            '🔄 Функция жмЫх для анимации текста в юникоде.\n\n'
             '📝 <b>Как использовать:</b>\n'
             '1. Напишите любой текст → получите шифр\n'
             '2. Отправьте фото или GIF → получите зашифрованную версию\n'
             '3. Отправьте боту шифр → получите исходный текст/фото/GIF\n'
             '4. Если скопировано "🔒 Зашифрованное сообщение:" с "пр" → бот автоматически расшифрует\n'
-            '5. Для больших сообщений, разделенных на части → отправьте все части боту и он соберет их\n\n'
+            '5. Для больших сообщений, разделенных на части → отправьте все части боту и он соберет их\n'
+            '6. Используйте шифр Цезаря → укажите сдвиг для шифрования/дешифрования\n'
+            '7. Запустите жмЫх для создания анимированного текста с юникод сдвигом\n\n'
             '⚠️ <b>Внимание:</b> Файлы с изображениями могут быть большими из-за высокого качества\n\n'
             '⚙️ <b>Технология:</b> Стеганография с использованием zero-width символов Unicode и XOR шифрование',
             parse_mode='HTML'
@@ -1054,6 +1137,103 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
                 parse_mode='HTML'
             )
 
+    if user_id in USER_STATES and USER_STATES[user_id].get('waiting_for_zhmyh_text', False):
+        # Сбрасываем состояние ожидания
+        USER_STATES[user_id]['waiting_for_zhmyh_text'] = False
+        
+        # Запускаем анимацию
+        await animate_unicode_shift_infinite(update, context, text, delay=0.2)
+        return
+
+async def animate_unicode_shift_infinite(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str, delay: float = 0.2):
+    """
+    Анимирует текст, постепенно сдвигая символы в Unicode таблице и обновляя сообщение.
+    Анимация выполняется бесконечно, пока пользователь не нажмет кнопку "Отмена".
+    
+    :param update: Объект Update Telegram
+    :param context: Контекст бота
+    :param text: Текст для анимации
+    :param delay: Задержка между шагами в секундах
+    """
+    # Создаем клавиатуру с кнопкой отмены
+    keyboard = [[InlineKeyboardButton("❌ Отмена", callback_data=f"cancel_animation_{update.effective_user.id}")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Отправляем начальное сообщение с кнопкой отмены
+    message = await update.message.reply_text(
+        f'🔄 жмЫх анимация юникода:\n\n{text}',
+        reply_markup=reply_markup
+    )
+    
+    # Сохраняем данные для возможности отмены анимации
+    if 'animations' not in context.bot_data:
+        context.bot_data['animations'] = {}
+    
+    # Флаг для контроля анимации
+    animation_id = f"{update.effective_user.id}_{message.message_id}"
+    context.bot_data['animations'][animation_id] = {
+        'active': True,
+        'message': message,
+        'text': text
+    }
+    
+    # Счетчик шагов анимации
+    step = 0
+    
+    # Анимируем текст с заданной задержкой до отмены
+    try:
+        while context.bot_data['animations'].get(animation_id, {}).get('active', False):
+            step += 1
+            
+            # Сдвигаем каждый символ на текущий шаг
+            shifted_text = ''.join(chr((ord(c) + step) % 65536) for c in text)
+            
+            # Обновляем сообщение, но сохраняем клавиатуру
+            await message.edit_text(
+                f'🔄 жмЫх анимация юникода (сдвиг: {step}):\n\n{shifted_text}',
+                reply_markup=reply_markup
+            )
+            
+            # Пауза между обновлениями
+            await asyncio.sleep(delay)
+            
+            # Если шаг стал слишком большим, обнуляем для предотвращения проблем
+            if step >= 1000:
+                step = 0
+    except Exception as e:
+        logger.error(f"Ошибка при анимации текста: {str(e)}")
+    finally:
+        # Удаляем информацию об анимации
+        if animation_id in context.bot_data.get('animations', {}):
+            del context.bot_data['animations'][animation_id]
+
+async def handle_animation_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    Обрабатывает нажатие на кнопку управления анимацией.
+    """
+    query = update.callback_query
+    await query.answer()
+    
+    # Получаем данные из callback_data
+    data = query.data
+    
+    if data.startswith("cancel_animation_"):
+        user_id = int(data.split("_")[-1])
+        
+        # Находим все анимации пользователя и останавливаем их
+        animations = context.bot_data.get('animations', {})
+        stopped = False
+        
+        for animation_id, animation_data in list(animations.items()):
+            if animation_id.startswith(f"{user_id}_"):
+                animation_data['active'] = False
+                stopped = True
+        
+        if stopped:
+            await query.edit_message_text(
+                f"✅ Анимация остановлена!\n\n"
+                f"Исходный текст: {animations.get(f'{user_id}_{query.message.message_id}', {}).get('text', 'Текст недоступен')}"
+            )
 
 async def handle_animation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
@@ -1280,6 +1460,25 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     else:
         await update.message.reply_text('❌ Принимаются только текстовые файлы (.txt).')
 
+def caesar_cipher(text, shift):
+    """
+    Шифр Цезаря с указанным сдвигом для всех символов.
+    """
+    result = []
+    for char in text:
+        # Получаем числовой код символа и применяем сдвиг
+        shifted_code = (ord(char) + shift) % 65536  # Используем полный диапазон Unicode
+        result.append(chr(shifted_code))
+    
+    return ''.join(result)
+
+def caesar_decipher(text, shift):
+    """
+    Дешифрование текста, зашифрованного шифром Цезаря.
+    """
+    # Для расшифровки используем отрицательный сдвиг
+    return caesar_cipher(text, -shift)
+
 def main() -> None:
 
     application = Application.builder().token("7633329337:AAGZxOp-DYPfLAnvsfdhntxexK0sIqXDNGM").build()
@@ -1300,7 +1499,10 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.Document.ALL, handle_document))
     
 
-    application.add_handler(CallbackQueryHandler(handle_split_callback))
+    application.add_handler(CallbackQueryHandler(handle_split_callback, pattern="^split_"))
+    
+    # Обработчик для кнопок управления анимацией
+    application.add_handler(CallbackQueryHandler(handle_animation_callback, pattern="^cancel_animation_"))
 
 
     logger.info("🚀 Бот запущен и готов к работе!")
